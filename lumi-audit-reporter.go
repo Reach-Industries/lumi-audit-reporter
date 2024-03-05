@@ -12,7 +12,7 @@ import (
 )
 
 type Reporter interface {
-	Report(actorId string, resourceId string, operation string)
+	Report(actorId, actorType, resourceId, resourceType, action string)
 	Close()
 }
 
@@ -23,23 +23,27 @@ type reporter struct {
 	Source      string
 }
 
-type auditStructure struct {
-	Source     string `json:"source"`
-	ActorId    string `json:"actorId"`
-	ResourceId string `json:"resourceId"`
-	Operation  string `json:"operation"`
+type AuditMessage struct {
+	Source       string `json:"source"`
+	ActorId      string `json:"actorId"`
+	ResourceId   string `json:"resourceId"`
+	ActorType    string `json:"actorType"`
+	ResourceType string `json:"resourceType"`
+	Action       string `json:"action"`
 }
 
 // Sends error messages to ohDear topic
-func (r reporter) Report(actorId string, resourceId string, operation string) {
-	as := auditStructure{
-		Source:     r.Source,
-		ActorId:    actorId,
-		ResourceId: resourceId,
-		Operation:  operation,
+func (r reporter) Report(actorId, actorType, resourceId, resourceType, action string) {
+	am := AuditMessage{
+		Source:       r.Source,
+		ActorId:      actorId,
+		ResourceId:   resourceId,
+		ActorType:    actorType,
+		ResourceType: resourceType,
+		Action:       action,
 	}
 
-	messageJson, _ := json.Marshal(as)
+	messageJson, _ := json.Marshal(am)
 
 	r.AuditWriter.WriteMessages(context.Background(),
 		kafka.Message{
