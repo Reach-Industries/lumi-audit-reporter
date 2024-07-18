@@ -4,6 +4,8 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"sync"
+	"time"
 
 	"github.com/pkg/errors"
 
@@ -17,10 +19,12 @@ type Reporter interface {
 }
 
 type reporter struct {
-	MSK_BROKERS []string
-	ERROR_TOPIC string
-	AuditWriter *kafka.Writer
-	Source      string
+	MSK_BROKERS    []string
+	ERROR_TOPIC    string
+	AuditWriter    *kafka.Writer
+	Source         string
+	unsentMessages map[uuid.UUID]AuditMessage
+	mut            *sync.Mutex
 }
 
 type AuditMessage struct {
@@ -45,14 +49,34 @@ func (r reporter) Report(actorId, actorType, resourceId, resourceType, action st
 
 	messageJson, _ := json.Marshal(am)
 
+	id := uuid.New()
+	r.mut.Lock()
+	r.unsentMessages[id] = am
+	r.mut.Unlock()
+
+	go r.writeMessage(id, messageJson)
+
+}
+
+func (r reporter) writeMessage(id uuid.UUID, messageJson []byte) {
 	r.AuditWriter.WriteMessages(context.Background(),
 		kafka.Message{
 			Key:   []byte(uuid.New().String()),
 			Value: messageJson,
 		})
+
+	// remove message from unsentMessages
+	r.mut.Lock()
+	delete(r.unsentMessages, id)
+	r.mut.Unlock()
+
 }
 
 func (r reporter) Close() {
+	// if any unsent messages, wait for them to be sent
+	for len(r.unsentMessages) > 0 {
+		time.Sleep(1 * time.Second)
+	}
 	r.AuditWriter.Close()
 }
 
@@ -66,10 +90,12 @@ func CreateLumiAuditor(source string, brokers []string, auditTopic string, isLoc
 	aw := getKafkaWriter(brokers, auditTopic, isLocal)
 
 	reporterToReturn = reporter{
-		MSK_BROKERS: brokers,
-		ERROR_TOPIC: auditTopic,
-		AuditWriter: aw,
-		Source:      source,
+		MSK_BROKERS:    brokers,
+		ERROR_TOPIC:    auditTopic,
+		AuditWriter:    aw,
+		Source:         source,
+		unsentMessages: make(map[uuid.UUID]AuditMessage),
+		mut:            &sync.Mutex{},
 	}
 	return
 }
